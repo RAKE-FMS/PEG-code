@@ -1,12 +1,22 @@
 import { act } from "react";
 import { useEditorStore } from "./editorStore";
 
+const TEST_GCODE = "G90\nM82\nG1 X10 Y0 Z0.2 E1 F1800\nG1 X20 Y0 Z0.2 E2 F1800";
+
 describe("editorStore", () => {
-  afterEach(() => {
+  function resetStore(): void {
     act(() => {
-      useEditorStore.getState().loadDocument("G90\nM82\nG1 X10 Y0 Z0.2 E1 F1800", "test.gcode");
+      useEditorStore.getState().loadDocument(TEST_GCODE, "test.gcode");
       useEditorStore.getState().clearSelection();
     });
+  }
+
+  beforeEach(() => {
+    resetStore();
+  });
+
+  afterEach(() => {
+    resetStore();
   });
 
   it("supports additive selection for vertices", () => {
@@ -33,8 +43,41 @@ describe("editorStore", () => {
       useEditorStore.getState().confirmExtrude();
     });
 
-    expect(useEditorStore.getState().document.segments).toHaveLength(2);
+    expect(useEditorStore.getState().document.segments).toHaveLength(3);
     expect(useEditorStore.getState().activeTool).toBe("select");
   });
-});
 
+  it("selects both endpoint vertices when selecting a segment", () => {
+    const segment = useEditorStore.getState().document.segments[0];
+
+    act(() => {
+      useEditorStore.getState().selectSegment(segment.id, false);
+    });
+
+    expect(useEditorStore.getState().selection.segmentIds).toEqual([segment.id]);
+    expect(useEditorStore.getState().selection.vertexIds).toEqual([
+      segment.startNodeId,
+      segment.endNodeId
+    ]);
+  });
+
+  it("keeps endpoint vertices in sync for additive segment selection", () => {
+    const [firstSegment, secondSegment] = useEditorStore.getState().document.segments;
+
+    act(() => {
+      useEditorStore.getState().selectSegment(firstSegment.id, false);
+      useEditorStore.getState().selectSegment(secondSegment.id, true);
+    });
+
+    expect(useEditorStore.getState().selection.segmentIds).toEqual([
+      firstSegment.id,
+      secondSegment.id
+    ]);
+    expect(useEditorStore.getState().selection.vertexIds).toEqual([
+      firstSegment.startNodeId,
+      firstSegment.endNodeId,
+      secondSegment.startNodeId,
+      secondSegment.endNodeId
+    ]);
+  });
+});

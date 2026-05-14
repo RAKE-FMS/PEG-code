@@ -13,6 +13,7 @@ import {
 } from "three";
 import { useShallow } from "zustand/react/shallow";
 import { useEditorStore } from "../app/store/editorStore";
+import { getExtrudeInsertionIndex } from "../domain/toolpath/extrude";
 import type { Node, Segment } from "../domain/toolpath/types";
 
 const TRAVEL_COLOR = "#7d8da1";
@@ -418,6 +419,12 @@ function ExtrudePreview(): JSX.Element | null {
     return null;
   }
 
+  const insertionIndex = getExtrudeInsertionIndex(document, extrudeSession.sourceNodeId);
+  const followingSegment = document.segments[insertionIndex];
+  const followingNode = followingSegment
+    ? document.nodes[followingSegment.endNodeId]
+    : null;
+
   return (
     <>
       <Line
@@ -435,6 +442,23 @@ function ExtrudePreview(): JSX.Element | null {
         gapSize={0.45}
         lineWidth={2.4}
       />
+      {followingNode ? (
+        <Line
+          points={[
+            [
+              extrudeSession.previewPosition.x,
+              extrudeSession.previewPosition.y,
+              extrudeSession.previewPosition.z
+            ],
+            [followingNode.position.x, followingNode.position.y, followingNode.position.z]
+          ]}
+          color={PREVIEW_COLOR}
+          dashed
+          dashSize={0.8}
+          gapSize={0.45}
+          lineWidth={2.1}
+        />
+      ) : null}
       <mesh
         position={[
           extrudeSession.previewPosition.x,

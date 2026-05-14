@@ -2,10 +2,54 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useMemo, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useEditorStore } from "../app/store/editorStore";
+import { distanceBetween } from "../domain/toolpath/math";
 import { serializeGcode } from "../domain/toolpath/serializeGcode";
+import type { ToolpathDocument } from "../domain/toolpath/types";
+
+const NODE_MATCH_EPSILON = 0.0001;
 
 function intersects(ids: string[], activeIds: string[]): boolean {
   return ids.some((id) => activeIds.includes(id));
+}
+
+function matchesSelectedVertex(nodeId: string | undefined, activeVertexIds: string[]): boolean {
+  return nodeId !== undefined && activeVertexIds.includes(nodeId);
+}
+
+function getSelectedSegmentEndpointNodeIds(
+  document: ToolpathDocument,
+  selectedSegmentIds: string[]
+): string[] {
+  const endpointIds = new Set<string>();
+
+  for (const segmentId of selectedSegmentIds) {
+    const segment = document.segments.find((candidate) => candidate.id === segmentId);
+    if (!segment) {
+      continue;
+    }
+
+    const startNode = document.nodes[segment.startNodeId];
+    const endNode = document.nodes[segment.endNodeId];
+    if (!startNode || !endNode) {
+      continue;
+    }
+
+    for (const candidateSegment of document.segments) {
+      const candidateEndNode = document.nodes[candidateSegment.endNodeId];
+      if (!candidateEndNode) {
+        continue;
+      }
+
+      if (
+        distanceBetween(candidateEndNode.position, startNode.position) < NODE_MATCH_EPSILON ||
+        distanceBetween(candidateEndNode.position, endNode.position) < NODE_MATCH_EPSILON
+      ) {
+        endpointIds.add(candidateSegment.endNodeId);
+      }
+    }
+  }
+
+  return [...endpointIds];
 }
 
 type GcodePanelProps = {
@@ -24,12 +68,16 @@ export function GcodePanel({ width, onResizeStart }: GcodePanelProps): JSX.Eleme
   );
 
   const lines = useMemo(() => serializeGcode(document), [document]);
+  const selectedSegmentEndpointNodeIds = useMemo(
+    () => getSelectedSegmentEndpointNodeIds(document, selection.segmentIds),
+    [document, selection.segmentIds]
+  );
   const lineRefs = useRef<Record<number, HTMLButtonElement | null>>({});
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   const focusLineNumber = useMemo(() => {
     if (hoverTarget?.type === "vertex") {
-      return lines.find((line) => line.relatedNodeIds.includes(hoverTarget.id))?.lineNumber ?? null;
+      return lines.find((line) => line.nodeId === hoverTarget.id)?.lineNumber ?? null;
     }
 
     if (hoverTarget?.type === "segment") {
@@ -37,19 +85,21 @@ export function GcodePanel({ width, onResizeStart }: GcodePanelProps): JSX.Eleme
     }
 
     if (selection.vertexIds.length > 0) {
-      return (
-        lines.find((line) => intersects(line.relatedNodeIds, selection.vertexIds))?.lineNumber ?? null
-      );
+      return lines.find((line) => matchesSelectedVertex(line.nodeId, selection.vertexIds))?.lineNumber ?? null;
     }
 
     if (selection.segmentIds.length > 0) {
       return (
-        lines.find((line) => intersects(line.relatedSegmentIds, selection.segmentIds))?.lineNumber ?? null
+        lines.find(
+          (line) =>
+            intersects(line.relatedSegmentIds, selection.segmentIds) ||
+            matchesSelectedVertex(line.nodeId, selectedSegmentEndpointNodeIds)
+        )?.lineNumber ?? null
       );
     }
 
     return null;
-  }, [hoverTarget, lines, selection.segmentIds, selection.vertexIds]);
+  }, [hoverTarget, lines, selectedSegmentEndpointNodeIds, selection.segmentIds, selection.vertexIds]);
 
   useEffect(() => {
     if (!focusLineNumber) {
@@ -109,10 +159,12 @@ export function GcodePanel({ width, onResizeStart }: GcodePanelProps): JSX.Eleme
       <div ref={scrollContainerRef} className="gcode-lines" role="list" aria-label="G-code lines" tabIndex={0}>
         <div className="gcode-lines-inner">
           {lines.map((line) => {
-            const highlightedByVertex = intersects(line.relatedNodeIds, selection.vertexIds);
+            const highlightedByVertex =
+              matchesSelectedVertex(line.nodeId, selection.vertexIds) ||
+              (selection.segmentIds.length > 0 &&
+                matchesSelectedVertex(line.nodeId, selectedSegmentEndpointNodeIds));
             const highlightedBySegment = intersects(line.relatedSegmentIds, selection.segmentIds);
-            const hoveredByVertex =
-              hoverTarget?.type === "vertex" && line.relatedNodeIds.includes(hoverTarget.id);
+            const hoveredByVertex = hoverTarget?.type === "vertex" && line.nodeId === hoverTarget.id;
             const hoveredBySegment = hoverTarget?.type === "segment" && line.segmentId === hoverTarget.id;
             const isFocused = line.lineNumber === focusLineNumber;
 

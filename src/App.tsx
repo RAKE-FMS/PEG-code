@@ -5,8 +5,12 @@ import { GcodePanel } from "./components/GcodePanel";
 import { Viewport } from "./components/Viewport";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { exportGcode } from "./domain/toolpath/exportGcode";
+import { distanceBetween } from "./domain/toolpath/math";
 import { serializeGcode } from "./domain/toolpath/serializeGcode";
+import type { ToolpathDocument } from "./domain/toolpath/types";
 import { openGcodeFile, saveGcodeFile } from "./lib/fileSystem";
+
+const NODE_MATCH_EPSILON = 0.0001;
 
 function describeSelection(vertexCount: number, segmentCount: number): string {
   if (vertexCount === 0 && segmentCount === 0) {
@@ -20,13 +24,44 @@ function describeSelection(vertexCount: number, segmentCount: number): string {
 }
 
 function describeFocusedGcode(
+  document: ToolpathDocument,
   serializedLines: ReturnType<typeof serializeGcode>,
   vertexIds: string[],
   segmentIds: string[]
 ): string {
+  const selectedSegmentEndpointNodeIds = new Set<string>();
+
+  for (const segmentId of segmentIds) {
+    const segment = document.segments.find((candidate) => candidate.id === segmentId);
+    if (!segment) {
+      continue;
+    }
+
+    const startNode = document.nodes[segment.startNodeId];
+    const endNode = document.nodes[segment.endNodeId];
+    if (!startNode || !endNode) {
+      continue;
+    }
+
+    for (const candidateSegment of document.segments) {
+      const candidateEndNode = document.nodes[candidateSegment.endNodeId];
+      if (!candidateEndNode) {
+        continue;
+      }
+
+      if (
+        distanceBetween(candidateEndNode.position, startNode.position) < NODE_MATCH_EPSILON ||
+        distanceBetween(candidateEndNode.position, endNode.position) < NODE_MATCH_EPSILON
+      ) {
+        selectedSegmentEndpointNodeIds.add(candidateSegment.endNodeId);
+      }
+    }
+  }
+
   const matchingLines = serializedLines.filter(
     (line) =>
-      line.relatedNodeIds.some((id) => vertexIds.includes(id)) ||
+      (line.nodeId !== undefined && vertexIds.includes(line.nodeId)) ||
+      (line.nodeId !== undefined && selectedSegmentEndpointNodeIds.has(line.nodeId)) ||
       line.relatedSegmentIds.some((id) => segmentIds.includes(id))
   );
 
@@ -74,8 +109,8 @@ function AppShell(): JSX.Element {
     [selection.segmentIds.length, selection.vertexIds.length]
   );
   const focusedGcodeLabel = useMemo(
-    () => describeFocusedGcode(serializedLines, selection.vertexIds, selection.segmentIds),
-    [selection.segmentIds, selection.vertexIds, serializedLines]
+    () => describeFocusedGcode(document, serializedLines, selection.vertexIds, selection.segmentIds),
+    [document, selection.segmentIds, selection.vertexIds, serializedLines]
   );
 
   useEffect(() => {

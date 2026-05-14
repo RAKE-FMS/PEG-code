@@ -27,14 +27,19 @@ describe("exportGcode", () => {
       "G90",
       "M82",
       "G0 X0 Y0 Z0.2",
-      "G1 X10 Y0 Z0.2 E1"
+      "G1 X10 Y0 Z0.2 E1",
+      "G1 X20 Y0 Z0.2 E2"
     ].join("\n"));
 
-    const sourceNodeId = document.segments[0].endNodeId;
+    const sourceNodeId = document.segments[1].endNodeId;
     const nextDocument = extrudeFromNode(document, sourceNodeId, { x: 10, y: 10, z: 4 });
     const exported = exportGcode(nextDocument);
 
     const lines = exported.split("\n");
-    expect(lines[lines.length - 1]).toContain("G1 X10 Y10 Z4");
+    const insertedIndex = lines.findIndex((line) => line.includes("G1 X10 Y10 Z4"));
+    const followingIndex = lines.findIndex((line) => line.includes("G1 X20 Y0 Z0.2"));
+
+    expect(insertedIndex).toBeGreaterThan(-1);
+    expect(followingIndex).toBe(insertedIndex + 1);
   });
 });

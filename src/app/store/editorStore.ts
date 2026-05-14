@@ -48,6 +48,28 @@ function toggleId(currentIds: string[], id: string): string[] {
     : [...currentIds, id];
 }
 
+function uniqueIds(ids: string[]): string[] {
+  return [...new Set(ids)];
+}
+
+function getSegmentEndpointIds(document: ToolpathDocument, segmentIds: string[]): string[] {
+  return uniqueIds(
+    segmentIds.flatMap((segmentId) => {
+      const segment = document.segments.find((candidate) => candidate.id === segmentId);
+      return segment ? [segment.startNodeId, segment.endNodeId] : [];
+    })
+  );
+}
+
+function getStandaloneVertexIds(
+  document: ToolpathDocument,
+  currentVertexIds: string[],
+  currentSegmentIds: string[]
+): string[] {
+  const segmentVertexIds = new Set(getSegmentEndpointIds(document, currentSegmentIds));
+  return currentVertexIds.filter((vertexId) => !segmentVertexIds.has(vertexId));
+}
+
 export const useEditorStore = create<EditorStore>((set, get) => ({
   document: initialDocument,
   sourceName: "sample.gcode",
@@ -89,14 +111,24 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       extrudeSession: null
     })),
   selectSegment: (id, additive = false) =>
-    set((state) => ({
-      selection: {
-        vertexIds: additive ? state.selection.vertexIds : [],
-        segmentIds: additive ? toggleId(state.selection.segmentIds, id) : [id]
-      },
-      activeTool: "select",
-      extrudeSession: null
-    })),
+    set((state) => {
+      const nextSegmentIds = additive ? toggleId(state.selection.segmentIds, id) : [id];
+      const standaloneVertexIds = additive
+        ? getStandaloneVertexIds(state.document, state.selection.vertexIds, state.selection.segmentIds)
+        : [];
+
+      return {
+        selection: {
+          vertexIds: uniqueIds([
+            ...standaloneVertexIds,
+            ...getSegmentEndpointIds(state.document, nextSegmentIds)
+          ]),
+          segmentIds: nextSegmentIds
+        },
+        activeTool: "select",
+        extrudeSession: null
+      };
+    }),
   beginExtrude: (planeNormal) => {
     const state = get();
     const sourceNodeId = state.selection.vertexIds[0];
@@ -160,4 +192,3 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     });
   }
 }));
-

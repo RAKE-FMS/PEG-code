@@ -20,7 +20,13 @@ describe("serializeGcode", () => {
   });
 
   it("includes newly extruded geometry in the serialized lines", () => {
-    const document = parseGcode(["G90", "M82", "G0 X0 Y0 Z0.2", "G1 X10 Y0 Z0.2 E1"].join("\n"));
+    const document = parseGcode([
+      "G90",
+      "M82",
+      "G0 X0 Y0 Z0.2",
+      "G1 X10 Y0 Z0.2 E1",
+      "G1 X20 Y0 Z0.2 E2"
+    ].join("\n"));
     const nextDocument = extrudeFromNode(document, document.segments[1].endNodeId, {
       x: 10,
       y: 10,
@@ -29,9 +35,10 @@ describe("serializeGcode", () => {
 
     const lines = serializeGcode(nextDocument);
     const motionLines = lines.filter((line) => line.kind === "motion");
-    const lastMotionLine = motionLines[motionLines.length - 1];
+    const insertedMotionLine = motionLines.find((line) => line.text.includes("G1 X10 Y10 Z0.2"));
+    const reroutedMotionLine = motionLines.find((line) => line.text.includes("G1 X20 Y0 Z0.2"));
 
-    expect(lastMotionLine?.text).toContain("G1 X10 Y10 Z0.2");
-    expect(lastMotionLine?.nodeId).toBe(`node-${Object.keys(nextDocument.nodes).length - 1}`);
+    expect(insertedMotionLine?.nodeId).toBe(`node-${Object.keys(nextDocument.nodes).length - 1}`);
+    expect(motionLines.indexOf(reroutedMotionLine!)).toBe(motionLines.indexOf(insertedMotionLine!) + 1);
   });
 });
