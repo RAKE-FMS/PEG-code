@@ -83,6 +83,7 @@ function AppShell(): JSX.Element {
     hoverTarget,
     activeTool,
     extrudeSession,
+    transformSession,
     loadDocument,
     setStatusMessage
   } = useEditorStore(
@@ -94,6 +95,7 @@ function AppShell(): JSX.Element {
       hoverTarget: state.hoverTarget,
       activeTool: state.activeTool,
       extrudeSession: state.extrudeSession,
+      transformSession: state.transformSession,
       loadDocument: state.loadDocument,
       setStatusMessage: state.setStatusMessage
     }))
@@ -203,8 +205,8 @@ function AppShell(): JSX.Element {
           <button type="button" onClick={handleExport} disabled={segmentCount === 0}>
             Export Edited G-code
           </button>
-          <button type="button" disabled>
-            Move (`G`) soon
+          <button type="button" disabled={selection.vertexIds.length === 0}>
+            Move with `G`
           </button>
         </div>
       </header>
@@ -227,8 +229,12 @@ function AppShell(): JSX.Element {
                 </div>
                 <div className="overlay-card">
                   <strong>Tool</strong>
-                  <span className={activeTool === "extrude" ? "success-text" : "accent-text"}>
-                    {activeTool === "extrude" ? "Extrude active" : "Selection mode"}
+                  <span className={activeTool === "select" ? "accent-text" : "success-text"}>
+                    {activeTool === "move"
+                      ? "Move active"
+                      : activeTool === "extrude"
+                        ? "Extrude active"
+                        : "Selection mode"}
                   </span>
                 </div>
                 <div className="overlay-card">
@@ -246,6 +252,18 @@ function AppShell(): JSX.Element {
                       {extrudeSession.previewPosition.x.toFixed(2)}, {extrudeSession.previewPosition.y.toFixed(2)},
                       {" "}
                       {extrudeSession.previewPosition.z.toFixed(2)}
+                    </span>
+                  </div>
+                ) : null}
+                {transformSession ? (
+                  <div className="overlay-card">
+                    <strong>Transform</strong>
+                    <span>
+                      {transformSession.mode.toUpperCase()}
+                      {" / "}
+                      {transformSession.axisLock ? transformSession.axisLock.toUpperCase() : "FREE"}
+                      {" / "}
+                      {transformSession.numericInput || "pointer"}
                     </span>
                   </div>
                 ) : null}
@@ -278,7 +296,7 @@ function AppShell(): JSX.Element {
             Selected
           </span>
           <span>{selectionLabel}</span>
-          <span>`E` extrude / `Shift` additive selection / `Esc` cancel</span>
+          <span>`G` move / `E` extrude / `X Y Z` axis / number input in mm / `Enter` confirm / `Esc` cancel</span>
         </div>
       </footer>
     </div>

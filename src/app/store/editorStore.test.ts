@@ -39,12 +39,44 @@ describe("editorStore", () => {
     act(() => {
       useEditorStore.getState().selectVertex(segment.endNodeId, false);
       useEditorStore.getState().beginExtrude({ x: 0, y: 0, z: 1 });
-      useEditorStore.getState().updateExtrudePreview({ x: 10, y: 5, z: 2 });
-      useEditorStore.getState().confirmExtrude();
+      useEditorStore.getState().updateTransformPreview({ x: 0, y: 5, z: 1.8 });
+      useEditorStore.getState().confirmTransform();
     });
 
     expect(useEditorStore.getState().document.segments).toHaveLength(3);
     expect(useEditorStore.getState().activeTool).toBe("select");
+  });
+
+  it("supports move mode with axis-locked numeric input", () => {
+    const segment = useEditorStore.getState().document.segments[0];
+
+    act(() => {
+      useEditorStore.getState().selectVertex(segment.endNodeId, false);
+      useEditorStore.getState().beginMove({ x: 0, y: 0, z: 1 });
+      useEditorStore.getState().setTransformAxisLock("x");
+      useEditorStore.getState().appendTransformNumericInput("-");
+      useEditorStore.getState().appendTransformNumericInput(".");
+      useEditorStore.getState().appendTransformNumericInput("1");
+      useEditorStore.getState().confirmTransform();
+    });
+
+    expect(useEditorStore.getState().document.nodes[segment.endNodeId]?.position.x).toBeCloseTo(9.9);
+    expect(useEditorStore.getState().activeTool).toBe("select");
+  });
+
+  it("keeps the first typed numeric value even if pointer preview updates arrive afterward", () => {
+    const segment = useEditorStore.getState().document.segments[0];
+
+    act(() => {
+      useEditorStore.getState().selectVertex(segment.endNodeId, false);
+      useEditorStore.getState().beginMove({ x: 0, y: 0, z: 1 });
+      useEditorStore.getState().setTransformAxisLock("x");
+      useEditorStore.getState().appendTransformNumericInput("1");
+      useEditorStore.getState().updateTransformPreview({ x: 4, y: 0, z: 0 });
+      useEditorStore.getState().confirmTransform();
+    });
+
+    expect(useEditorStore.getState().document.nodes[segment.endNodeId]?.position.x).toBeCloseTo(11);
   });
 
   it("selects both endpoint vertices when selecting a segment", () => {

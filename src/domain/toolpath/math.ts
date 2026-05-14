@@ -20,6 +20,10 @@ export function addVector(a: Vector3Like, b: Vector3Like): Vector3Like {
   };
 }
 
+export function dotVector(a: Vector3Like, b: Vector3Like): number {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
 export function normalizeVector(value: Vector3Like): Vector3Like {
   const magnitude = Math.hypot(value.x, value.y, value.z) || 1;
 
@@ -33,4 +37,3 @@ export function normalizeVector(value: Vector3Like): Vector3Like {
 export function cloneVector(value: Vector3Like): Vector3Like {
   return { ...value };
 }
-

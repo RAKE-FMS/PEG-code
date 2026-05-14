@@ -13,6 +13,7 @@ import {
 } from "three";
 import { useShallow } from "zustand/react/shallow";
 import { useEditorStore } from "../app/store/editorStore";
+import { addVector, dotVector, normalizeVector, subtractVector } from "../domain/toolpath/math";
 import { getExtrudeInsertionIndex } from "../domain/toolpath/extrude";
 import type { Node, Segment } from "../domain/toolpath/types";
 
@@ -21,6 +22,10 @@ const EXTRUSION_COLOR = "#ff8a3d";
 const HOVER_COLOR = "#7bc8ff";
 const SELECTION_COLOR = "#6effc5";
 const PREVIEW_COLOR = "#4df3c8";
+const AXIS_X_COLOR = "#ff4d4f";
+const AXIS_Y_COLOR = "#52c41a";
+const AXIS_Z_COLOR = "#1677ff";
+const INFINITE_AXIS_LENGTH = 100000;
 const TRACKPAD_ROTATE_SPEED = 0.005;
 const ZOOM_DOLLY_SCALE = 0.985;
 const MOUSE_DISABLED = -1 as MOUSE;
@@ -37,18 +42,26 @@ function SceneInteractions(): null {
   const {
     selection,
     activeTool,
+    beginMove,
     beginExtrude,
-    cancelExtrude,
-    confirmExtrude,
-    extrudeSession
+    cancelTransform,
+    confirmTransform,
+    setTransformAxisLock,
+    appendTransformNumericInput,
+    backspaceTransformNumericInput,
+    transformSession
   } = useEditorStore(
     useShallow((state) => ({
       selection: state.selection,
       activeTool: state.activeTool,
+      beginMove: state.beginMove,
       beginExtrude: state.beginExtrude,
-      cancelExtrude: state.cancelExtrude,
-      confirmExtrude: state.confirmExtrude,
-      extrudeSession: state.extrudeSession
+      cancelTransform: state.cancelTransform,
+      confirmTransform: state.confirmTransform,
+      setTransformAxisLock: state.setTransformAxisLock,
+      appendTransformNumericInput: state.appendTransformNumericInput,
+      backspaceTransformNumericInput: state.backspaceTransformNumericInput,
+      transformSession: state.transformSession
     }))
   );
 
@@ -58,35 +71,86 @@ function SceneInteractions(): null {
         return;
       }
 
+      if (
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        /^[0-9.-]$/.test(event.key) &&
+        transformSession
+      ) {
+        event.preventDefault();
+        appendTransformNumericInput(event.key);
+        return;
+      }
+
+      if (event.key === "Backspace" && transformSession) {
+        event.preventDefault();
+        backspaceTransformNumericInput();
+        return;
+      }
+
+      if (event.key === "Enter" && transformSession) {
+        event.preventDefault();
+        confirmTransform();
+        return;
+      }
+
+      if (["x", "y", "z"].includes(event.key.toLowerCase()) && transformSession) {
+        event.preventDefault();
+        setTransformAxisLock(event.key.toLowerCase() as "x" | "y" | "z");
+        return;
+      }
+
+      if (event.key.toLowerCase() === "g" && activeTool === "select" && selection.vertexIds.length > 0) {
+        event.preventDefault();
+        const normal = new Vector3();
+        camera.getWorldDirection(normal);
+        beginMove({ x: normal.x, y: normal.y, z: normal.z });
+        return;
+      }
+
       if (event.key.toLowerCase() === "e" && activeTool === "select" && selection.vertexIds.length === 1) {
         event.preventDefault();
         const normal = new Vector3();
         camera.getWorldDirection(normal);
         beginExtrude({ x: normal.x, y: normal.y, z: normal.z });
+        return;
       }
 
-      if (event.key === "Escape" && extrudeSession) {
+      if (event.key === "Escape" && transformSession) {
         event.preventDefault();
-        cancelExtrude();
+        cancelTransform();
       }
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeTool, beginExtrude, camera, cancelExtrude, extrudeSession, selection.vertexIds]);
+  }, [
+    activeTool,
+    appendTransformNumericInput,
+    backspaceTransformNumericInput,
+    beginExtrude,
+    beginMove,
+    camera,
+    cancelTransform,
+    confirmTransform,
+    selection.vertexIds,
+    setTransformAxisLock,
+    transformSession
+  ]);
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent): void {
-      if (event.button !== 0 || !extrudeSession) {
+      if (event.button !== 0 || !transformSession) {
         return;
       }
 
-      confirmExtrude();
+      confirmTransform();
     }
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [confirmExtrude, extrudeSession]);
+  }, [confirmTransform, transformSession]);
 
   return null;
 }
@@ -97,11 +161,11 @@ function ExtrudePreviewController({
   toolpathGroupRef: RefObject<Group>;
 }): null {
   const { camera, raycaster, pointer } = useThree();
-  const { document, extrudeSession, updateExtrudePreview } = useEditorStore(
+  const { document, transformSession, updateTransformPreview } = useEditorStore(
     useShallow((state) => ({
       document: state.document,
-      extrudeSession: state.extrudeSession,
-      updateExtrudePreview: state.updateExtrudePreview
+      transformSession: state.transformSession,
+      updateTransformPreview: state.updateTransformPreview
     }))
   );
 
@@ -112,11 +176,15 @@ function ExtrudePreviewController({
   const worldIntersection = useMemo(() => new Vector3(), []);
 
   useFrame(() => {
-    if (!extrudeSession) {
+    if (!transformSession) {
       return;
     }
 
-    const sourceNode = document.nodes[extrudeSession.sourceNodeId];
+    if (transformSession.numericInput.length > 0) {
+      return;
+    }
+
+    const sourceNode = document.nodes[transformSession.sourceNodeId];
     if (!sourceNode) {
       return;
     }
@@ -130,9 +198,9 @@ function ExtrudePreviewController({
     toolpathGroup.updateWorldMatrix(true, false);
     toolpathGroup.localToWorld(source);
     planeNormal.set(
-      extrudeSession.planeNormal.x,
-      extrudeSession.planeNormal.y,
-      extrudeSession.planeNormal.z
+      transformSession.planeNormal.x,
+      transformSession.planeNormal.y,
+      transformSession.planeNormal.z
     );
     plane.setFromNormalAndCoplanarPoint(planeNormal.normalize(), source);
     raycaster.setFromCamera(pointer, camera);
@@ -140,11 +208,25 @@ function ExtrudePreviewController({
     if (raycaster.ray.intersectPlane(plane, worldIntersection)) {
       intersection.copy(worldIntersection);
       toolpathGroup.worldToLocal(intersection);
-      updateExtrudePreview({
-        x: intersection.x,
-        y: intersection.y,
-        z: intersection.z
-      });
+      const rawOffset = subtractVector(intersection, sourceNode.position);
+
+      if (transformSession.axisLock) {
+        const axisVector =
+          transformSession.axisLock === "x"
+            ? { x: 1, y: 0, z: 0 }
+            : transformSession.axisLock === "y"
+              ? { x: 0, y: 1, z: 0 }
+              : { x: 0, y: 0, z: 1 };
+        const amount = dotVector(rawOffset, normalizeVector(axisVector));
+        updateTransformPreview({
+          x: transformSession.axisLock === "x" ? amount : 0,
+          y: transformSession.axisLock === "y" ? amount : 0,
+          z: transformSession.axisLock === "z" ? amount : 0
+        });
+        return;
+      }
+
+      updateTransformPreview(rawOffset);
     }
   });
 
@@ -155,6 +237,37 @@ function Grid(): JSX.Element {
   const grid = useMemo(() => new GridHelper(220, 44, "#244760", "#163042"), []);
   grid.position.set(0, 0, 0);
   return <primitive object={grid} />;
+}
+
+function InfiniteAxes(): JSX.Element {
+  return (
+    <group rotation={[-Math.PI / 2, 0, 0]}>
+      <Line
+        points={[
+          [-INFINITE_AXIS_LENGTH, 0, 0],
+          [INFINITE_AXIS_LENGTH, 0, 0]
+        ]}
+        color={AXIS_X_COLOR}
+        lineWidth={1.8}
+      />
+      <Line
+        points={[
+          [0, -INFINITE_AXIS_LENGTH, 0],
+          [0, INFINITE_AXIS_LENGTH, 0]
+        ]}
+        color={AXIS_Y_COLOR}
+        lineWidth={1.8}
+      />
+      <Line
+        points={[
+          [0, 0, -INFINITE_AXIS_LENGTH],
+          [0, 0, INFINITE_AXIS_LENGTH]
+        ]}
+        color={AXIS_Z_COLOR}
+        lineWidth={1.8}
+      />
+    </group>
+  );
 }
 
 function isZoomWheelEvent(event: WheelEvent): boolean {
@@ -402,24 +515,70 @@ function VertexHandle({ nodeId, position }: { nodeId: string; position: Node["po
   );
 }
 
-function ExtrudePreview(): JSX.Element | null {
-  const { document, extrudeSession } = useEditorStore(
+function TransformPreview(): JSX.Element | null {
+  const { document, selection, transformSession } = useEditorStore(
     useShallow((state) => ({
       document: state.document,
-      extrudeSession: state.extrudeSession
+      selection: state.selection,
+      transformSession: state.transformSession
     }))
   );
 
-  if (!extrudeSession) {
+  if (!transformSession) {
     return null;
   }
 
-  const sourceNode = document.nodes[extrudeSession.sourceNodeId];
+  const sourceNode = document.nodes[transformSession.sourceNodeId];
   if (!sourceNode) {
     return null;
   }
 
-  const insertionIndex = getExtrudeInsertionIndex(document, extrudeSession.sourceNodeId);
+  const previewPosition = addVector(sourceNode.position, transformSession.previewOffset);
+
+  if (transformSession.mode === "move") {
+    return (
+      <>
+        {transformSession.nodeIds.map((nodeId) => {
+          const node = document.nodes[nodeId];
+          if (!node) {
+            return null;
+          }
+
+          const movedPosition = addVector(node.position, transformSession.previewOffset);
+          return (
+            <Line
+              key={`move-preview-${nodeId}`}
+              points={[
+                [node.position.x, node.position.y, node.position.z],
+                [movedPosition.x, movedPosition.y, movedPosition.z]
+              ]}
+              color={PREVIEW_COLOR}
+              dashed
+              dashSize={0.8}
+              gapSize={0.45}
+              lineWidth={2.1}
+            />
+          );
+        })}
+        {selection.vertexIds.map((nodeId) => {
+          const node = document.nodes[nodeId];
+          if (!node) {
+            return null;
+          }
+
+          const movedPosition = addVector(node.position, transformSession.previewOffset);
+          return (
+            <mesh key={`move-node-${nodeId}`} position={[movedPosition.x, movedPosition.y, movedPosition.z]}>
+              <sphereGeometry args={[0.85, 18, 18]} />
+              <meshStandardMaterial color={PREVIEW_COLOR} />
+            </mesh>
+          );
+        })}
+      </>
+    );
+  }
+
+  const insertionIndex = getExtrudeInsertionIndex(document, transformSession.sourceNodeId);
   const followingSegment = document.segments[insertionIndex];
   const followingNode = followingSegment
     ? document.nodes[followingSegment.endNodeId]
@@ -430,11 +589,7 @@ function ExtrudePreview(): JSX.Element | null {
       <Line
         points={[
           [sourceNode.position.x, sourceNode.position.y, sourceNode.position.z],
-          [
-            extrudeSession.previewPosition.x,
-            extrudeSession.previewPosition.y,
-            extrudeSession.previewPosition.z
-          ]
+          [previewPosition.x, previewPosition.y, previewPosition.z]
         ]}
         color={PREVIEW_COLOR}
         dashed
@@ -445,11 +600,7 @@ function ExtrudePreview(): JSX.Element | null {
       {followingNode ? (
         <Line
           points={[
-            [
-              extrudeSession.previewPosition.x,
-              extrudeSession.previewPosition.y,
-              extrudeSession.previewPosition.z
-            ],
+            [previewPosition.x, previewPosition.y, previewPosition.z],
             [followingNode.position.x, followingNode.position.y, followingNode.position.z]
           ]}
           color={PREVIEW_COLOR}
@@ -460,11 +611,7 @@ function ExtrudePreview(): JSX.Element | null {
         />
       ) : null}
       <mesh
-        position={[
-          extrudeSession.previewPosition.x,
-          extrudeSession.previewPosition.y,
-          extrudeSession.previewPosition.z
-        ]}
+        position={[previewPosition.x, previewPosition.y, previewPosition.z]}
       >
         <sphereGeometry args={[0.85, 18, 18]} />
         <meshStandardMaterial color={PREVIEW_COLOR} />
@@ -474,20 +621,29 @@ function ExtrudePreview(): JSX.Element | null {
 }
 
 function ToolpathScene(): JSX.Element {
-  const { document, clearSelection, extrudeSession } = useEditorStore(
+  const { document, clearSelection, transformSession } = useEditorStore(
     useShallow((state) => ({
       document: state.document,
       clearSelection: state.clearSelection,
-      extrudeSession: state.extrudeSession
+      transformSession: state.transformSession
     }))
   );
   const toolpathGroupRef = useRef<Group | null>(null);
+  const previewOffset = transformSession?.mode === "move" ? transformSession.previewOffset : null;
+
+  function resolveNodePosition(node: Node): Node["position"] {
+    if (!previewOffset || !transformSession?.nodeIds.includes(node.id)) {
+      return node.position;
+    }
+
+    return addVector(node.position, previewOffset);
+  }
 
   return (
     <Canvas
       camera={{ position: [48, 36, 58], fov: 45 }}
       onPointerMissed={() => {
-        if (!extrudeSession) {
+        if (!transformSession) {
           clearSelection();
         }
       }}
@@ -497,10 +653,10 @@ function ToolpathScene(): JSX.Element {
       <ambientLight intensity={1} />
       <directionalLight intensity={1.4} position={[14, 28, 18]} />
       <Grid />
-      <axesHelper args={[20]} />
+      <InfiniteAxes />
       <SceneInteractions />
       <ExtrudePreviewController toolpathGroupRef={toolpathGroupRef} />
-      <ViewportControls enabled={!extrudeSession} />
+      <ViewportControls enabled={!transformSession} />
       <group ref={toolpathGroupRef} rotation={[-Math.PI / 2, 0, 0]}>
         {document.segments.map((segment) => {
           const startNode = document.nodes[segment.startNodeId];
@@ -514,17 +670,17 @@ function ToolpathScene(): JSX.Element {
             <SegmentLine
               key={segment.id}
               segment={segment}
-              startNode={startNode}
-              endNode={endNode}
+              startNode={{ ...startNode, position: resolveNodePosition(startNode) }}
+              endNode={{ ...endNode, position: resolveNodePosition(endNode) }}
             />
           );
         })}
 
         {Object.values(document.nodes).map((node) => (
-          <VertexHandle key={node.id} nodeId={node.id} position={node.position} />
+          <VertexHandle key={node.id} nodeId={node.id} position={resolveNodePosition(node)} />
         ))}
 
-        <ExtrudePreview />
+        <TransformPreview />
       </group>
     </Canvas>
   );
