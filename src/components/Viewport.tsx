@@ -1,7 +1,7 @@
 import { Line, OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useMemo } from "react";
-import { GridHelper, Plane, Vector3 } from "three";
+import { type ElementRef, useEffect, useMemo, useRef } from "react";
+import { GridHelper, MOUSE, OrthographicCamera, PerspectiveCamera, Plane, TOUCH, Vector3 } from "three";
 import { useShallow } from "zustand/react/shallow";
 import { useEditorStore } from "../app/store/editorStore";
 import type { Node, Segment } from "../domain/toolpath/types";
@@ -11,6 +11,10 @@ const EXTRUSION_COLOR = "#ff8a3d";
 const HOVER_COLOR = "#7bc8ff";
 const SELECTION_COLOR = "#6effc5";
 const PREVIEW_COLOR = "#4df3c8";
+const TRACKPAD_ROTATE_SPEED = 0.005;
+const ZOOM_DOLLY_SCALE = 0.985;
+const MOUSE_DISABLED = -1 as MOUSE;
+type OrbitControlsInstance = ElementRef<typeof OrbitControls>;
 
 function useSelectionColors(segment: Segment, hovered: boolean, selected: boolean): string {
   if (selected) return SELECTION_COLOR;
@@ -127,6 +131,172 @@ function Grid(): JSX.Element {
   const grid = useMemo(() => new GridHelper(220, 44, "#244760", "#163042"), []);
   grid.position.set(0, 0, 0);
   return <primitive object={grid} />;
+}
+
+function isZoomWheelEvent(event: WheelEvent): boolean {
+  if (event.ctrlKey || event.metaKey) {
+    return true;
+  }
+
+  if (event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) {
+    return true;
+  }
+
+  const legacyWheelDelta = Math.abs(
+    (event as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY ?? 0
+  );
+
+  return Math.abs(event.deltaX) === 0 && (legacyWheelDelta === 120 || legacyWheelDelta === 100);
+}
+
+function panPerspectiveCamera(
+  controls: OrbitControlsInstance,
+  camera: PerspectiveCamera,
+  deltaX: number,
+  deltaY: number
+): void {
+  const element = controls.domElement;
+  if (!element) {
+    return;
+  }
+
+  const offset = new Vector3().subVectors(camera.position, controls.target);
+  const targetDistance = offset.length() * Math.tan((camera.fov * Math.PI) / 360);
+  const panX = (2 * deltaX * targetDistance) / element.clientHeight;
+  const panY = (-2 * deltaY * targetDistance) / element.clientHeight;
+  const panOffset = new Vector3();
+
+  panOffset.setFromMatrixColumn(camera.matrix, 0).multiplyScalar(panX);
+  panOffset.add(new Vector3().setFromMatrixColumn(camera.matrix, 1).multiplyScalar(panY));
+
+  camera.position.add(panOffset);
+  controls.target.add(panOffset);
+}
+
+function panOrthographicCamera(
+  controls: OrbitControlsInstance,
+  camera: OrthographicCamera,
+  deltaX: number,
+  deltaY: number
+): void {
+  const element = controls.domElement;
+  if (!element) {
+    return;
+  }
+
+  const panX = (deltaX * (camera.right - camera.left)) / camera.zoom / element.clientWidth;
+  const panY = (-deltaY * (camera.top - camera.bottom)) / camera.zoom / element.clientHeight;
+  const panOffset = new Vector3();
+
+  panOffset.setFromMatrixColumn(camera.matrix, 0).multiplyScalar(panX);
+  panOffset.add(new Vector3().setFromMatrixColumn(camera.matrix, 1).multiplyScalar(panY));
+
+  camera.position.add(panOffset);
+  controls.target.add(panOffset);
+}
+
+function rotateCamera(controls: OrbitControlsInstance, deltaX: number, deltaY: number): void {
+  const nextAzimuthalAngle = controls.getAzimuthalAngle() + deltaX * TRACKPAD_ROTATE_SPEED;
+  const nextPolarAngle = controls.getPolarAngle() + deltaY * TRACKPAD_ROTATE_SPEED;
+  const clampedPolarAngle = Math.min(
+    controls.maxPolarAngle,
+    Math.max(controls.minPolarAngle, nextPolarAngle)
+  );
+
+  controls.setAzimuthalAngle(nextAzimuthalAngle);
+  controls.setPolarAngle(clampedPolarAngle);
+}
+
+function setMiddleMouseMode(controls: OrbitControlsInstance, usePan: boolean): void {
+  controls.mouseButtons.LEFT = MOUSE_DISABLED;
+  controls.mouseButtons.MIDDLE = usePan ? MOUSE.PAN : MOUSE.ROTATE;
+  controls.mouseButtons.RIGHT = MOUSE.PAN;
+}
+
+function ViewportControls({ enabled }: { enabled: boolean }): JSX.Element {
+  const controlsRef = useRef<OrbitControlsInstance | null>(null);
+
+  useEffect(() => {
+    const controls = controlsRef.current;
+    const element = controls?.domElement;
+    if (!controls || !element) {
+      return;
+    }
+
+    setMiddleMouseMode(controls, false);
+
+    function handleKeyChange(event: KeyboardEvent): void {
+      const activeControls = controlsRef.current;
+      if (!activeControls) {
+        return;
+      }
+
+      setMiddleMouseMode(activeControls, event.shiftKey);
+    }
+
+    function handleWheel(event: WheelEvent): void {
+      const activeControls = controlsRef.current;
+      if (!enabled || !activeControls) {
+        return;
+      }
+
+      event.preventDefault();
+
+      if (isZoomWheelEvent(event) && event.deltaY < 0) {
+        activeControls.dollyIn(ZOOM_DOLLY_SCALE);
+      } else if (isZoomWheelEvent(event) && event.deltaY > 0) {
+        activeControls.dollyOut(ZOOM_DOLLY_SCALE);
+      } else if (event.shiftKey) {
+        if (activeControls.object instanceof PerspectiveCamera) {
+          panPerspectiveCamera(activeControls, activeControls.object, event.deltaX, event.deltaY);
+        } else if (activeControls.object instanceof OrthographicCamera) {
+          panOrthographicCamera(activeControls, activeControls.object, event.deltaX, event.deltaY);
+        }
+      } else {
+        rotateCamera(activeControls, event.deltaX, event.deltaY);
+      }
+
+      activeControls.update();
+    }
+
+    function handleWindowBlur(): void {
+      const activeControls = controlsRef.current;
+      if (!activeControls) {
+        return;
+      }
+
+      setMiddleMouseMode(activeControls, false);
+    }
+
+    window.addEventListener("keydown", handleKeyChange);
+    window.addEventListener("keyup", handleKeyChange);
+    window.addEventListener("blur", handleWindowBlur);
+    element.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      window.removeEventListener("keydown", handleKeyChange);
+      window.removeEventListener("keyup", handleKeyChange);
+      window.removeEventListener("blur", handleWindowBlur);
+      element.removeEventListener("wheel", handleWheel);
+    };
+  }, [enabled]);
+
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      makeDefault
+      enabled={enabled}
+      enableZoom={false}
+      mouseButtons={{
+        LEFT: MOUSE_DISABLED,
+        MIDDLE: MOUSE.ROTATE,
+        RIGHT: MOUSE.PAN
+      }}
+      touches={{
+        ONE: TOUCH.ROTATE,
+        TWO: TOUCH.DOLLY_PAN
+      }}
+    />
+  );
 }
 
 function SegmentLine({ segment, startNode, endNode }: { segment: Segment; startNode: Node; endNode: Node }): JSX.Element {
@@ -282,7 +452,7 @@ function ToolpathScene(): JSX.Element {
       <axesHelper args={[20]} />
       <SceneInteractions />
       <ExtrudePreviewController />
-      <OrbitControls makeDefault enabled={!extrudeSession} />
+      <ViewportControls enabled={!extrudeSession} />
       <group rotation={[-Math.PI / 2, 0, 0]}>
         {document.segments.map((segment) => {
           const startNode = document.nodes[segment.startNodeId];
