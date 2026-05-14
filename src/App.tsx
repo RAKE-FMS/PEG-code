@@ -1,9 +1,11 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useEditorStore } from "./app/store/editorStore";
+import { GcodePanel } from "./components/GcodePanel";
 import { Viewport } from "./components/Viewport";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { exportGcode } from "./domain/toolpath/exportGcode";
+import { serializeGcode } from "./domain/toolpath/serializeGcode";
 import { openGcodeFile, saveGcodeFile } from "./lib/fileSystem";
 
 function describeSelection(vertexCount: number, segmentCount: number): string {
@@ -15,6 +17,26 @@ function describeSelection(vertexCount: number, segmentCount: number): string {
   if (vertexCount > 0) labels.push(`${vertexCount} vertex`);
   if (segmentCount > 0) labels.push(`${segmentCount} segment`);
   return `${labels.join(" / ")} selected`;
+}
+
+function describeFocusedGcode(
+  serializedLines: ReturnType<typeof serializeGcode>,
+  vertexIds: string[],
+  segmentIds: string[]
+): string {
+  const matchingLines = serializedLines.filter(
+    (line) =>
+      line.relatedNodeIds.some((id) => vertexIds.includes(id)) ||
+      line.relatedSegmentIds.some((id) => segmentIds.includes(id))
+  );
+
+  if (matchingLines.length === 0) {
+    return "No G-code focus";
+  }
+
+  const firstLine = matchingLines[0].lineNumber;
+  const lastLine = matchingLines[matchingLines.length - 1].lineNumber;
+  return firstLine === lastLine ? `Line ${firstLine}` : `Lines ${firstLine}-${lastLine}`;
 }
 
 function AppShell(): JSX.Element {
@@ -44,10 +66,69 @@ function AppShell(): JSX.Element {
 
   const segmentCount = document.segments.length;
   const nodeCount = Object.keys(document.nodes).length;
+  const serializedLines = useMemo(() => serializeGcode(document), [document]);
+  const workspaceLayoutRef = useRef<HTMLDivElement | null>(null);
+  const [gcodePanelWidth, setGcodePanelWidth] = useState(360);
   const selectionLabel = useMemo(
     () => describeSelection(selection.vertexIds.length, selection.segmentIds.length),
     [selection.segmentIds.length, selection.vertexIds.length]
   );
+  const focusedGcodeLabel = useMemo(
+    () => describeFocusedGcode(serializedLines, selection.vertexIds, selection.segmentIds),
+    [selection.segmentIds, selection.vertexIds, serializedLines]
+  );
+
+  useEffect(() => {
+    function clampWidth(nextWidth: number): number {
+      const containerWidth = workspaceLayoutRef.current?.clientWidth ?? 0;
+      if (containerWidth === 0) {
+        return Math.min(640, Math.max(280, nextWidth));
+      }
+
+      const maxWidth = Math.max(280, Math.min(640, Math.round(containerWidth * 0.55)));
+      return Math.min(maxWidth, Math.max(280, nextWidth));
+    }
+
+    function handleResize(): void {
+      setGcodePanelWidth((currentWidth) => clampWidth(currentWidth));
+    }
+
+    window.addEventListener("resize", handleResize);
+    handleResize();
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  function handleGcodeResizeStart(event: React.PointerEvent<HTMLButtonElement>): void {
+    event.preventDefault();
+
+    function clampWidth(nextWidth: number): number {
+      const containerWidth = workspaceLayoutRef.current?.clientWidth ?? 0;
+      if (containerWidth === 0) {
+        return Math.min(640, Math.max(280, nextWidth));
+      }
+
+      const maxWidth = Math.max(280, Math.min(640, Math.round(containerWidth * 0.55)));
+      return Math.min(maxWidth, Math.max(280, nextWidth));
+    }
+
+    function handlePointerMove(moveEvent: PointerEvent): void {
+      const containerBounds = workspaceLayoutRef.current?.getBoundingClientRect();
+      if (!containerBounds) {
+        return;
+      }
+
+      const nextWidth = containerBounds.right - moveEvent.clientX;
+      setGcodePanelWidth(clampWidth(nextWidth));
+    }
+
+    function handlePointerUp(): void {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+  }
 
   async function handleOpen(): Promise<void> {
     const result = await openGcodeFile();
@@ -94,38 +175,50 @@ function AppShell(): JSX.Element {
       </header>
 
       <main className="viewport-shell">
-        <div className="viewport-overlay">
-          <div className="overlay-card">
-            <strong>Document</strong>
-            <span>{sourceName}</span>
-          </div>
-          <div className="overlay-card">
-            <strong>Tool</strong>
-            <span className={activeTool === "extrude" ? "success-text" : "accent-text"}>
-              {activeTool === "extrude" ? "Extrude active" : "Selection mode"}
-            </span>
-          </div>
-          <div className="overlay-card">
-            <strong>Hover</strong>
-            <span>{hoverTarget ? `${hoverTarget.type}: ${hoverTarget.id}` : "Nothing hovered"}</span>
-          </div>
-          {extrudeSession ? (
-            <div className="overlay-card">
-              <strong>Extrude Preview</strong>
-              <span>
-                {extrudeSession.previewPosition.x.toFixed(2)}, {extrudeSession.previewPosition.y.toFixed(2)},
-                {" "}
-                {extrudeSession.previewPosition.z.toFixed(2)}
-              </span>
-            </div>
-          ) : null}
-        </div>
-
         <ErrorBoundary
           fallbackTitle="Viewport failed to mount"
           fallbackBody="The toolpath viewport crashed during render. The error below should point us to the exact Three.js or React issue."
         >
-          <Viewport />
+          <div
+            ref={workspaceLayoutRef}
+            className="workspace-layout"
+            style={{ gridTemplateColumns: `minmax(0, 1fr) ${gcodePanelWidth}px` }}
+          >
+            <div className="viewport-stage">
+              <div className="viewport-overlay">
+                <div className="overlay-card">
+                  <strong>Document</strong>
+                  <span>{sourceName}</span>
+                </div>
+                <div className="overlay-card">
+                  <strong>Tool</strong>
+                  <span className={activeTool === "extrude" ? "success-text" : "accent-text"}>
+                    {activeTool === "extrude" ? "Extrude active" : "Selection mode"}
+                  </span>
+                </div>
+                <div className="overlay-card">
+                  <strong>Hover</strong>
+                  <span>{hoverTarget ? `${hoverTarget.type}: ${hoverTarget.id}` : "Nothing hovered"}</span>
+                </div>
+                <div className="overlay-card">
+                  <strong>G-code Focus</strong>
+                  <span>{focusedGcodeLabel}</span>
+                </div>
+                {extrudeSession ? (
+                  <div className="overlay-card">
+                    <strong>Extrude Preview</strong>
+                    <span>
+                      {extrudeSession.previewPosition.x.toFixed(2)}, {extrudeSession.previewPosition.y.toFixed(2)},
+                      {" "}
+                      {extrudeSession.previewPosition.z.toFixed(2)}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+              <Viewport />
+            </div>
+            <GcodePanel width={gcodePanelWidth} onResizeStart={handleGcodeResizeStart} />
+          </div>
         </ErrorBoundary>
       </main>
 

@@ -129,6 +129,20 @@ input {
     0 30px 70px rgba(0, 0, 0, 0.32);
 }
 
+.workspace-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  width: 100%;
+  height: 100%;
+}
+
+.viewport-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .viewport-overlay {
   position: absolute;
   inset: 18px 18px auto auto;
@@ -159,6 +173,158 @@ input {
 .overlay-card span {
   font-size: 0.88rem;
   color: var(--muted);
+}
+
+.gcode-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  border-left: 1px solid rgba(141, 160, 179, 0.14);
+  background: linear-gradient(180deg, rgba(6, 12, 18, 0.86), rgba(8, 14, 20, 0.94));
+}
+
+.gcode-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid rgba(141, 160, 179, 0.14);
+}
+
+.gcode-panel-header > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gcode-panel-header strong {
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #f5f7fa;
+}
+
+.gcode-panel-header span {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.gcode-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.gcode-panel-actions button {
+  border: 1px solid rgba(123, 200, 255, 0.22);
+  background: rgba(17, 29, 42, 0.88);
+  color: #dce6f2;
+  border-radius: 999px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.gcode-resize-handle {
+  position: absolute;
+  top: 0;
+  left: -6px;
+  width: 12px;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.gcode-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 56px;
+  border-radius: 999px;
+  background: rgba(123, 200, 255, 0.2);
+  transform: translate(-50%, -50%);
+  transition: background 120ms ease;
+}
+
+.gcode-resize-handle:hover::before,
+.gcode-resize-handle:focus-visible::before {
+  background: rgba(123, 200, 255, 0.55);
+}
+
+.gcode-lines {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable both-edges;
+}
+
+.gcode-lines-inner {
+  width: max-content;
+  min-width: 100%;
+}
+
+.gcode-line {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  width: max-content;
+  min-width: 100%;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.gcode-line code {
+  display: block;
+  overflow: hidden;
+  color: #dce6f2;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  white-space: pre;
+  text-overflow: ellipsis;
+}
+
+.gcode-line-number {
+  color: #6f8295;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.77rem;
+  text-align: right;
+}
+
+.gcode-line.is-motion {
+  cursor: pointer;
+}
+
+.gcode-line.is-hovered {
+  background: rgba(123, 200, 255, 0.08);
+  border-color: rgba(123, 200, 255, 0.18);
+}
+
+.gcode-line.is-selected {
+  background: rgba(110, 255, 197, 0.1);
+  border-color: rgba(110, 255, 197, 0.22);
+}
+
+.gcode-line.is-focused {
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .accent-text {
@@ -253,5 +419,24 @@ input {
 
   .toolbar-actions {
     width: 100%;
+  }
+
+  .workspace-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(320px, 1fr) 240px;
+  }
+
+  .gcode-panel {
+    width: auto !important;
+    border-left: 0;
+    border-top: 1px solid rgba(141, 160, 179, 0.14);
+  }
+
+  .gcode-resize-handle {
+    display: none;
+  }
+
+  .gcode-panel-header {
+    flex-direction: column;
   }
 }
