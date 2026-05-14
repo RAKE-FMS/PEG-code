@@ -1,7 +1,16 @@
 import { Line, OrbitControls } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { type ElementRef, useEffect, useMemo, useRef } from "react";
-import { GridHelper, MOUSE, OrthographicCamera, PerspectiveCamera, Plane, TOUCH, Vector3 } from "three";
+import { type ElementRef, type RefObject, useEffect, useMemo, useRef } from "react";
+import {
+  GridHelper,
+  Group,
+  MOUSE,
+  OrthographicCamera,
+  PerspectiveCamera,
+  Plane,
+  TOUCH,
+  Vector3
+} from "three";
 import { useShallow } from "zustand/react/shallow";
 import { useEditorStore } from "../app/store/editorStore";
 import type { Node, Segment } from "../domain/toolpath/types";
@@ -81,7 +90,11 @@ function SceneInteractions(): null {
   return null;
 }
 
-function ExtrudePreviewController(): null {
+function ExtrudePreviewController({
+  toolpathGroupRef
+}: {
+  toolpathGroupRef: RefObject<Group>;
+}): null {
   const { camera, raycaster, pointer } = useThree();
   const { document, extrudeSession, updateExtrudePreview } = useEditorStore(
     useShallow((state) => ({
@@ -95,6 +108,7 @@ function ExtrudePreviewController(): null {
   const intersection = useMemo(() => new Vector3(), []);
   const planeNormal = useMemo(() => new Vector3(), []);
   const source = useMemo(() => new Vector3(), []);
+  const worldIntersection = useMemo(() => new Vector3(), []);
 
   useFrame(() => {
     if (!extrudeSession) {
@@ -107,6 +121,13 @@ function ExtrudePreviewController(): null {
     }
 
     source.set(sourceNode.position.x, sourceNode.position.y, sourceNode.position.z);
+    const toolpathGroup = toolpathGroupRef.current;
+    if (!toolpathGroup) {
+      return;
+    }
+
+    toolpathGroup.updateWorldMatrix(true, false);
+    toolpathGroup.localToWorld(source);
     planeNormal.set(
       extrudeSession.planeNormal.x,
       extrudeSession.planeNormal.y,
@@ -115,7 +136,9 @@ function ExtrudePreviewController(): null {
     plane.setFromNormalAndCoplanarPoint(planeNormal.normalize(), source);
     raycaster.setFromCamera(pointer, camera);
 
-    if (raycaster.ray.intersectPlane(plane, intersection)) {
+    if (raycaster.ray.intersectPlane(plane, worldIntersection)) {
+      intersection.copy(worldIntersection);
+      toolpathGroup.worldToLocal(intersection);
       updateExtrudePreview({
         x: intersection.x,
         y: intersection.y,
@@ -434,6 +457,7 @@ function ToolpathScene(): JSX.Element {
       extrudeSession: state.extrudeSession
     }))
   );
+  const toolpathGroupRef = useRef<Group | null>(null);
 
   return (
     <Canvas
@@ -451,9 +475,9 @@ function ToolpathScene(): JSX.Element {
       <Grid />
       <axesHelper args={[20]} />
       <SceneInteractions />
-      <ExtrudePreviewController />
+      <ExtrudePreviewController toolpathGroupRef={toolpathGroupRef} />
       <ViewportControls enabled={!extrudeSession} />
-      <group rotation={[-Math.PI / 2, 0, 0]}>
+      <group ref={toolpathGroupRef} rotation={[-Math.PI / 2, 0, 0]}>
         {document.segments.map((segment) => {
           const startNode = document.nodes[segment.startNodeId];
           const endNode = document.nodes[segment.endNodeId];
