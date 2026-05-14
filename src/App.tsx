@@ -74,6 +74,12 @@ function describeFocusedGcode(
   return firstLine === lastLine ? `Line ${firstLine}` : `Lines ${firstLine}-${lastLine}`;
 }
 
+function describeActiveTool(activeTool: "select" | "move" | "extrude"): string {
+  if (activeTool === "move") return "Move active";
+  if (activeTool === "extrude") return "Extrude active";
+  return "Selection mode";
+}
+
 function AppShell(): JSX.Element {
   const {
     document,
@@ -84,13 +90,8 @@ function AppShell(): JSX.Element {
     activeTool,
     extrudeSession,
     transformSession,
-    undoStack,
-    redoStack,
     loadDocument,
-    setStatusMessage,
-    deleteSelectedVertices,
-    undo,
-    redo
+    setStatusMessage
   } = useEditorStore(
     useShallow((state) => ({
       document: state.document,
@@ -101,13 +102,8 @@ function AppShell(): JSX.Element {
       activeTool: state.activeTool,
       extrudeSession: state.extrudeSession,
       transformSession: state.transformSession,
-      undoStack: state.undoStack,
-      redoStack: state.redoStack,
       loadDocument: state.loadDocument,
-      setStatusMessage: state.setStatusMessage,
-      deleteSelectedVertices: state.deleteSelectedVertices,
-      undo: state.undo,
-      redo: state.redo
+      setStatusMessage: state.setStatusMessage
     }))
   );
 
@@ -215,18 +211,6 @@ function AppShell(): JSX.Element {
           <button type="button" onClick={handleExport} disabled={segmentCount === 0}>
             Export Edited G-code
           </button>
-          <button type="button" onClick={undo} disabled={undoStack.length === 0}>
-            Undo `Ctrl/Cmd+Z`
-          </button>
-          <button type="button" onClick={redo} disabled={redoStack.length === 0}>
-            Redo `Ctrl/Cmd+Shift+Z`
-          </button>
-          <button type="button" onClick={deleteSelectedVertices} disabled={selection.vertexIds.length === 0}>
-            Delete vertices
-          </button>
-          <button type="button" disabled={selection.vertexIds.length === 0}>
-            Move with `G`
-          </button>
         </div>
       </header>
 
@@ -241,52 +225,6 @@ function AppShell(): JSX.Element {
             style={{ gridTemplateColumns: `minmax(0, 1fr) ${gcodePanelWidth}px` }}
           >
             <div className="viewport-stage">
-              <div className="viewport-overlay">
-                <div className="overlay-card">
-                  <strong>Document</strong>
-                  <span>{sourceName}</span>
-                </div>
-                <div className="overlay-card">
-                  <strong>Tool</strong>
-                  <span className={activeTool === "select" ? "accent-text" : "success-text"}>
-                    {activeTool === "move"
-                      ? "Move active"
-                      : activeTool === "extrude"
-                        ? "Extrude active"
-                        : "Selection mode"}
-                  </span>
-                </div>
-                <div className="overlay-card">
-                  <strong>Hover</strong>
-                  <span>{hoverTarget ? `${hoverTarget.type}: ${hoverTarget.id}` : "Nothing hovered"}</span>
-                </div>
-                <div className="overlay-card">
-                  <strong>G-code Focus</strong>
-                  <span>{focusedGcodeLabel}</span>
-                </div>
-                {extrudeSession ? (
-                  <div className="overlay-card">
-                    <strong>Extrude Preview</strong>
-                    <span>
-                      {extrudeSession.previewPosition.x.toFixed(2)}, {extrudeSession.previewPosition.y.toFixed(2)},
-                      {" "}
-                      {extrudeSession.previewPosition.z.toFixed(2)}
-                    </span>
-                  </div>
-                ) : null}
-                {transformSession ? (
-                  <div className="overlay-card">
-                    <strong>Transform</strong>
-                    <span>
-                      {transformSession.mode.toUpperCase()}
-                      {" / "}
-                      {transformSession.axisLock ? transformSession.axisLock.toUpperCase() : "FREE"}
-                      {" / "}
-                      {transformSession.numericInput || "pointer"}
-                    </span>
-                  </div>
-                ) : null}
-              </div>
               <Viewport />
             </div>
             <GcodePanel width={gcodePanelWidth} onResizeStart={handleGcodeResizeStart} />
@@ -295,11 +233,46 @@ function AppShell(): JSX.Element {
       </main>
 
       <footer className="statusbar">
-        <div>
+        <div className="statusbar-main">
           <p>{statusMessage}</p>
           <p>
             {nodeCount} nodes / {segmentCount} segments
           </p>
+        </div>
+        <div className="status-meta">
+          <span>
+            <strong>Document</strong>
+            {sourceName}
+          </span>
+          <span>
+            <strong>Tool</strong>
+            <em className={activeTool === "select" ? "accent-text" : "success-text"}>
+              {describeActiveTool(activeTool)}
+            </em>
+          </span>
+          <span>
+            <strong>Hover</strong>
+            {hoverTarget ? `${hoverTarget.type}: ${hoverTarget.id}` : "Nothing hovered"}
+          </span>
+          <span>
+            <strong>G-code Focus</strong>
+            {focusedGcodeLabel}
+          </span>
+          {extrudeSession ? (
+            <span>
+              <strong>Extrude Preview</strong>
+              {extrudeSession.previewPosition.x.toFixed(2)}, {extrudeSession.previewPosition.y.toFixed(2)},{" "}
+              {extrudeSession.previewPosition.z.toFixed(2)}
+            </span>
+          ) : null}
+          {transformSession ? (
+            <span>
+              <strong>Transform</strong>
+              {transformSession.mode.toUpperCase()} /{" "}
+              {transformSession.axisLock ? transformSession.axisLock.toUpperCase() : "FREE"} /{" "}
+              {transformSession.numericInput || "pointer"}
+            </span>
+          ) : null}
         </div>
         <div className="legend">
           <span>

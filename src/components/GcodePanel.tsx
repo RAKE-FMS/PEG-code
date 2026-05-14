@@ -1,5 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useEditorStore } from "../app/store/editorStore";
 import { distanceBetween } from "../domain/toolpath/math";
@@ -72,8 +72,6 @@ export function GcodePanel({ width, onResizeStart }: GcodePanelProps): JSX.Eleme
     () => getSelectedSegmentEndpointNodeIds(document, selection.segmentIds),
     [document, selection.segmentIds]
   );
-  const lineRefs = useRef<Record<number, HTMLButtonElement | null>>({});
-  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
 
   const focusLineNumber = useMemo(() => {
     if (hoverTarget?.type === "vertex") {
@@ -101,25 +99,6 @@ export function GcodePanel({ width, onResizeStart }: GcodePanelProps): JSX.Eleme
     return null;
   }, [hoverTarget, lines, selectedSegmentEndpointNodeIds, selection.segmentIds, selection.vertexIds]);
 
-  useEffect(() => {
-    if (!focusLineNumber) {
-      return;
-    }
-
-    const element = lineRefs.current[focusLineNumber];
-    element?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }, [focusLineNumber]);
-
-  function scrollByAmount(direction: "up" | "down"): void {
-    const container = scrollContainerRef.current;
-    if (!container) {
-      return;
-    }
-
-    const nextTop = direction === "up" ? -container.clientHeight * 0.8 : container.clientHeight * 0.8;
-    container.scrollBy({ top: nextTop, behavior: "smooth" });
-  }
-
   return (
     <aside className="gcode-panel" style={{ width }}>
       <button
@@ -134,29 +113,9 @@ export function GcodePanel({ width, onResizeStart }: GcodePanelProps): JSX.Eleme
           <strong>G-code</strong>
           <span>Double-click a motion line to select its destination vertex.</span>
         </div>
-        <div className="gcode-panel-actions">
-          <button type="button" onClick={() => scrollByAmount("up")}>
-            Up
-          </button>
-          <button type="button" onClick={() => scrollByAmount("down")}>
-            Down
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              if (!focusLineNumber) {
-                return;
-              }
-
-              lineRefs.current[focusLineNumber]?.scrollIntoView({ block: "center", behavior: "smooth" });
-            }}
-          >
-            Focus
-          </button>
-        </div>
       </div>
 
-      <div ref={scrollContainerRef} className="gcode-lines" role="list" aria-label="G-code lines" tabIndex={0}>
+      <div className="gcode-lines" role="list" aria-label="G-code lines" tabIndex={0}>
         <div className="gcode-lines-inner">
           {lines.map((line) => {
             const highlightedByVertex =
@@ -181,9 +140,6 @@ export function GcodePanel({ width, onResizeStart }: GcodePanelProps): JSX.Eleme
             return (
               <button
                 key={line.lineNumber}
-                ref={(element) => {
-                  lineRefs.current[line.lineNumber] = element;
-                }}
                 type="button"
                 className={className}
                 onDoubleClick={() => {
