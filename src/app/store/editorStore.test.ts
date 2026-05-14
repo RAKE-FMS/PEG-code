@@ -1,4 +1,5 @@
 import { act } from "react";
+import { exportGcode } from "../../domain/toolpath/exportGcode";
 import { useEditorStore } from "./editorStore";
 
 const TEST_GCODE = "G90\nM82\nG1 X10 Y0 Z0.2 E1 F1800\nG1 X20 Y0 Z0.2 E2 F1800";
@@ -128,6 +129,49 @@ describe("editorStore", () => {
     });
 
     expect(useEditorStore.getState().selection.vertexIds).toEqual([segment.startNodeId]);
+  });
+
+  it("applies edited G-code text and keeps undo/redo in sync", () => {
+    act(() => {
+      useEditorStore.getState().setGcodeDraft(
+        "G90\nM82\nG1 X10 Y0 Z0.2 E1 F1800\nG1 X25 Y0 Z0.2 E2 F1800"
+      );
+    });
+
+    expect(useEditorStore.getState().isGcodeDirty).toBe(true);
+
+    act(() => {
+      useEditorStore.getState().applyGcodeDraft();
+    });
+
+    expect(useEditorStore.getState().document.nodes["node-3"]?.position.x).toBeCloseTo(25);
+    expect(useEditorStore.getState().isGcodeDirty).toBe(false);
+
+    act(() => {
+      useEditorStore.getState().undo();
+    });
+
+    expect(useEditorStore.getState().document.nodes["node-3"]?.position.x).toBeCloseTo(20);
+    expect(useEditorStore.getState().gcodeDraft).toContain("X20");
+
+    act(() => {
+      useEditorStore.getState().redo();
+    });
+
+    expect(useEditorStore.getState().document.nodes["node-3"]?.position.x).toBeCloseTo(25);
+    expect(useEditorStore.getState().gcodeDraft).toContain("X25");
+  });
+
+  it("reverts unsaved G-code draft edits back to the current document", () => {
+    const normalizedGcode = exportGcode(useEditorStore.getState().document);
+
+    act(() => {
+      useEditorStore.getState().setGcodeDraft(`${TEST_GCODE}\n; draft comment`);
+      useEditorStore.getState().revertGcodeDraft();
+    });
+
+    expect(useEditorStore.getState().gcodeDraft).toBe(normalizedGcode);
+    expect(useEditorStore.getState().isGcodeDirty).toBe(false);
   });
 
   it("deletes a middle vertex and supports undo/redo", () => {

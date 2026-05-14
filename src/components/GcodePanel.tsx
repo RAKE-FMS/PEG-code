@@ -1,5 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useEditorStore } from "../app/store/editorStore";
 import { distanceBetween } from "../domain/toolpath/math";
@@ -58,16 +58,34 @@ type GcodePanelProps = {
 };
 
 export function GcodePanel({ width, onResizeStart }: GcodePanelProps): JSX.Element {
-  const { document, hoverTarget, selection, selectVertex } = useEditorStore(
+  const {
+    document,
+    gcodeDraft,
+    isGcodeDirty,
+    hoverTarget,
+    selection,
+    selectVertex,
+    setGcodeDraft,
+    revertGcodeDraft,
+    applyGcodeDraft
+  } = useEditorStore(
     useShallow((state) => ({
       document: state.document,
+      gcodeDraft: state.gcodeDraft,
+      isGcodeDirty: state.isGcodeDirty,
       hoverTarget: state.hoverTarget,
       selection: state.selection,
-      selectVertex: state.selectVertex
+      selectVertex: state.selectVertex,
+      setGcodeDraft: state.setGcodeDraft,
+      revertGcodeDraft: state.revertGcodeDraft,
+      applyGcodeDraft: state.applyGcodeDraft
     }))
   );
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const lineNumbersRef = useRef<HTMLDivElement | null>(null);
 
   const lines = useMemo(() => serializeGcode(document), [document]);
+  const draftLines = useMemo(() => gcodeDraft.split("\n"), [gcodeDraft]);
   const selectedSegmentEndpointNodeIds = useMemo(
     () => getSelectedSegmentEndpointNodeIds(document, selection.segmentIds),
     [document, selection.segmentIds]
@@ -99,6 +117,20 @@ export function GcodePanel({ width, onResizeStart }: GcodePanelProps): JSX.Eleme
     return null;
   }, [hoverTarget, lines, selectedSegmentEndpointNodeIds, selection.segmentIds, selection.vertexIds]);
 
+  function focusEditorLine(lineNumber: number): void {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    const linesBeforeTarget = gcodeDraft.split("\n").slice(0, Math.max(0, lineNumber - 1));
+    const cursorOffset =
+      linesBeforeTarget.length > 0 ? linesBeforeTarget.join("\n").length + 1 : 0;
+
+    textarea.focus();
+    textarea.setSelectionRange(cursorOffset, cursorOffset);
+  }
+
   return (
     <aside className="gcode-panel" style={{ width }}>
       <button
@@ -111,49 +143,95 @@ export function GcodePanel({ width, onResizeStart }: GcodePanelProps): JSX.Eleme
       <div className="gcode-panel-header">
         <div>
           <strong>G-code</strong>
-          <span>Double-click a motion line to select its destination vertex.</span>
+          <span>Line numbers select the related vertex. Edit the text directly in place.</span>
+        </div>
+        <div className="gcode-panel-actions">
+          <button
+            type="button"
+            className="gcode-panel-toggle"
+            onClick={revertGcodeDraft}
+            disabled={!isGcodeDirty}
+          >
+            Revert
+          </button>
+          <button
+            type="button"
+            className="gcode-panel-toggle is-primary"
+            onClick={applyGcodeDraft}
+            disabled={!isGcodeDirty}
+          >
+            Apply
+          </button>
         </div>
       </div>
 
-      <div className="gcode-lines" role="list" aria-label="G-code lines" tabIndex={0}>
-        <div className="gcode-lines-inner">
-          {lines.map((line) => {
-            const highlightedByVertex =
-              matchesSelectedVertex(line.nodeId, selection.vertexIds) ||
-              (selection.segmentIds.length > 0 &&
-                matchesSelectedVertex(line.nodeId, selectedSegmentEndpointNodeIds));
-            const highlightedBySegment = intersects(line.relatedSegmentIds, selection.segmentIds);
-            const hoveredByVertex = hoverTarget?.type === "vertex" && line.nodeId === hoverTarget.id;
-            const hoveredBySegment = hoverTarget?.type === "segment" && line.segmentId === hoverTarget.id;
-            const isFocused = line.lineNumber === focusLineNumber;
+      <div className="gcode-editor-shell">
+        <div className="gcode-editor-frame">
+          <div className="gcode-line-numbers" aria-hidden="true" ref={lineNumbersRef}>
+            {draftLines.map((_, index) => {
+              const line = lines[index];
+              const highlightedByVertex =
+                line !== undefined &&
+                (matchesSelectedVertex(line.nodeId, selection.vertexIds) ||
+                  (selection.segmentIds.length > 0 &&
+                    matchesSelectedVertex(line.nodeId, selectedSegmentEndpointNodeIds)));
+              const highlightedBySegment =
+                line !== undefined && intersects(line.relatedSegmentIds, selection.segmentIds);
+              const hoveredByVertex =
+                line !== undefined && hoverTarget?.type === "vertex" && line.nodeId === hoverTarget.id;
+              const hoveredBySegment =
+                line !== undefined && hoverTarget?.type === "segment" && line.segmentId === hoverTarget.id;
+              const isFocused = index + 1 === focusLineNumber;
 
-            const className = [
-              "gcode-line",
-              highlightedByVertex || highlightedBySegment ? "is-selected" : "",
-              hoveredByVertex || hoveredBySegment ? "is-hovered" : "",
-              isFocused ? "is-focused" : "",
-              line.kind === "motion" ? "is-motion" : ""
-            ]
-              .filter(Boolean)
-              .join(" ");
+              const className = [
+                "gcode-line-number-button",
+                highlightedByVertex || highlightedBySegment ? "is-selected" : "",
+                hoveredByVertex || hoveredBySegment ? "is-hovered" : "",
+                isFocused ? "is-focused" : "",
+                line?.kind === "motion" ? "is-motion" : ""
+              ]
+                .filter(Boolean)
+                .join(" ");
 
-            return (
-              <button
-                key={line.lineNumber}
-                type="button"
-                className={className}
-                onDoubleClick={() => {
-                  if (line.nodeId) {
-                    selectVertex(line.nodeId, false);
-                  }
-                }}
-              >
-                <span className="gcode-line-number">{line.lineNumber}</span>
-                <code>{line.text || " "}</code>
-              </button>
-            );
-          })}
+              return (
+                <button
+                  key={index + 1}
+                  type="button"
+                  className={className}
+                  onClick={() => {
+                    if (line?.nodeId) {
+                      selectVertex(line.nodeId, false);
+                    }
+                  }}
+                  onDoubleClick={() => focusEditorLine(index + 1)}
+                >
+                  {index + 1}
+                </button>
+              );
+            })}
+          </div>
+
+          <textarea
+            ref={textareaRef}
+            className="gcode-editor"
+            aria-label="Editable G-code"
+            spellCheck={false}
+            value={gcodeDraft}
+            onChange={(event) => setGcodeDraft(event.target.value)}
+            onScroll={(event) => {
+              if (lineNumbersRef.current) {
+                lineNumbersRef.current.scrollTop = event.currentTarget.scrollTop;
+              }
+            }}
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                event.preventDefault();
+                applyGcodeDraft();
+              }
+            }}
+          />
         </div>
+        <div className="gcode-editor-hint">Apply with Ctrl+Enter or Cmd+Enter. Double-click a line number to jump there.</div>
       </div>
     </aside>
   );

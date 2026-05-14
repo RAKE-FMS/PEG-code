@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { deleteNodes } from "../../domain/toolpath/delete";
+import { exportGcode } from "../../domain/toolpath/exportGcode";
 import { addVector, cloneVector, distanceBetween } from "../../domain/toolpath/math";
 import { extrudeFromNode } from "../../domain/toolpath/extrude";
 import { moveNodesByOffset } from "../../domain/toolpath/move";
@@ -43,6 +44,8 @@ type EditorSnapshot = {
 type EditorStore = {
   document: ToolpathDocument;
   sourceName: string;
+  gcodeDraft: string;
+  isGcodeDirty: boolean;
   statusMessage: string;
   selection: SelectionState;
   hoverTarget: HoverTarget;
@@ -52,6 +55,9 @@ type EditorStore = {
   undoStack: EditorSnapshot[];
   redoStack: EditorSnapshot[];
   loadDocument: (gcodeText: string, sourceName?: string) => void;
+  setGcodeDraft: (gcodeText: string) => void;
+  revertGcodeDraft: () => void;
+  applyGcodeDraft: () => void;
   setStatusMessage: (message: string) => void;
   setHoverTarget: (target: HoverTarget) => void;
   clearHoverTarget: () => void;
@@ -72,6 +78,7 @@ type EditorStore = {
 };
 
 const initialDocument = parseGcode(SAMPLE_GCODE, "sample.gcode");
+const initialGcodeDraft = SAMPLE_GCODE;
 
 function toggleId(currentIds: string[], id: string): string[] {
   return currentIds.includes(id)
@@ -176,6 +183,10 @@ function createSnapshot(
   };
 }
 
+function getSerializedDocumentText(document: ToolpathDocument): string {
+  return exportGcode(document);
+}
+
 function selectionEquals(left: SelectionState, right: SelectionState): boolean {
   return (
     left.vertexIds.length === right.vertexIds.length &&
@@ -211,6 +222,8 @@ function withHistory(
 export const useEditorStore = create<EditorStore>((set, get) => ({
   document: initialDocument,
   sourceName: "sample.gcode",
+  gcodeDraft: initialGcodeDraft,
+  isGcodeDirty: false,
   statusMessage: "Ready. Open a G-code file or start exploring the sample path.",
   selection: {
     vertexIds: [],
@@ -226,6 +239,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     set({
       document: parseGcode(gcodeText, sourceName),
       sourceName,
+      gcodeDraft: gcodeText,
+      isGcodeDirty: false,
       activeTool: "select",
       extrudeSession: null,
       transformSession: null,
@@ -236,6 +251,43 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       statusMessage: `Loaded ${sourceName}`
     });
   },
+  setGcodeDraft: (gcodeDraft) =>
+    set((state) => ({
+      gcodeDraft,
+      isGcodeDirty: gcodeDraft !== getSerializedDocumentText(state.document)
+    })),
+  revertGcodeDraft: () =>
+    set((state) => ({
+      gcodeDraft: getSerializedDocumentText(state.document),
+      isGcodeDirty: false,
+      statusMessage: "Reverted G-code edits."
+    })),
+  applyGcodeDraft: () =>
+    set((state) => {
+      const normalizedCurrentText = getSerializedDocumentText(state.document);
+      if (state.gcodeDraft === normalizedCurrentText) {
+        return {
+          isGcodeDirty: false,
+          statusMessage: "No G-code changes to apply."
+        };
+      }
+
+      const nextDocument = parseGcode(state.gcodeDraft, state.sourceName);
+
+      return {
+        ...withHistory(state, {
+          document: nextDocument,
+          selection: { vertexIds: [], segmentIds: [] },
+          activeTool: "select",
+          extrudeSession: null,
+          transformSession: null,
+          hoverTarget: null,
+          statusMessage: "Applied G-code edits."
+        }),
+        gcodeDraft: state.gcodeDraft,
+        isGcodeDirty: false
+      };
+    }),
   setStatusMessage: (statusMessage) => set({ statusMessage }),
   setHoverTarget: (hoverTarget) => set({ hoverTarget }),
   clearHoverTarget: () => set({ hoverTarget: null }),
@@ -488,6 +540,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
       set({
         document: nextDocument,
+        gcodeDraft: getSerializedDocumentText(nextDocument),
+        isGcodeDirty: false,
         activeTool: "select",
         extrudeSession: null,
         transformSession: null,
@@ -512,6 +566,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     set({
       document: nextDocument,
+      gcodeDraft: getSerializedDocumentText(nextDocument),
+      isGcodeDirty: false,
       activeTool: "select",
       extrudeSession: null,
       transformSession: null,
@@ -541,6 +597,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
       return withHistory(state, {
         document: nextDocument,
+        gcodeDraft: getSerializedDocumentText(nextDocument),
+        isGcodeDirty: false,
         selection: { vertexIds: [], segmentIds: [] },
         activeTool: "select",
         extrudeSession: null,
@@ -561,6 +619,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       return {
         document: cloneDocument(previousSnapshot.document),
         sourceName: previousSnapshot.sourceName,
+        gcodeDraft: getSerializedDocumentText(previousSnapshot.document),
+        isGcodeDirty: false,
         selection: cloneSelection(previousSnapshot.selection),
         activeTool: "select",
         extrudeSession: null,
@@ -583,6 +643,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       return {
         document: cloneDocument(nextSnapshot.document),
         sourceName: nextSnapshot.sourceName,
+        gcodeDraft: getSerializedDocumentText(nextSnapshot.document),
+        isGcodeDirty: false,
         selection: cloneSelection(nextSnapshot.selection),
         activeTool: "select",
         extrudeSession: null,
