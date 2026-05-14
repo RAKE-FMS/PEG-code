@@ -46,10 +46,13 @@ function SceneInteractions(): null {
     beginExtrude,
     cancelTransform,
     confirmTransform,
+    deleteSelectedVertices,
     setTransformAxisLock,
     appendTransformNumericInput,
     backspaceTransformNumericInput,
-    transformSession
+    transformSession,
+    undo,
+    redo
   } = useEditorStore(
     useShallow((state) => ({
       selection: state.selection,
@@ -58,15 +61,37 @@ function SceneInteractions(): null {
       beginExtrude: state.beginExtrude,
       cancelTransform: state.cancelTransform,
       confirmTransform: state.confirmTransform,
+      deleteSelectedVertices: state.deleteSelectedVertices,
       setTransformAxisLock: state.setTransformAxisLock,
       appendTransformNumericInput: state.appendTransformNumericInput,
       backspaceTransformNumericInput: state.backspaceTransformNumericInput,
-      transformSession: state.transformSession
+      transformSession: state.transformSession,
+      undo: state.undo,
+      redo: state.redo
     }))
   );
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent): void {
+      const isUndoModifier = event.ctrlKey || event.metaKey;
+
+      if (isUndoModifier && !event.altKey && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+
+        if (transformSession) {
+          cancelTransform();
+          return;
+        }
+
+        if (event.shiftKey) {
+          redo();
+          return;
+        }
+
+        undo();
+        return;
+      }
+
       if (event.repeat) {
         return;
       }
@@ -117,6 +142,16 @@ function SceneInteractions(): null {
         return;
       }
 
+      if (
+        ["Backspace", "Delete"].includes(event.key) &&
+        !transformSession &&
+        selection.vertexIds.length > 0
+      ) {
+        event.preventDefault();
+        deleteSelectedVertices();
+        return;
+      }
+
       if (event.key === "Escape" && transformSession) {
         event.preventDefault();
         cancelTransform();
@@ -134,9 +169,12 @@ function SceneInteractions(): null {
     camera,
     cancelTransform,
     confirmTransform,
+    deleteSelectedVertices,
     selection.vertexIds,
     setTransformAxisLock,
-    transformSession
+    transformSession,
+    undo,
+    redo
   ]);
 
   useEffect(() => {

@@ -84,8 +84,13 @@ function AppShell(): JSX.Element {
     activeTool,
     extrudeSession,
     transformSession,
+    undoStack,
+    redoStack,
     loadDocument,
-    setStatusMessage
+    setStatusMessage,
+    deleteSelectedVertices,
+    undo,
+    redo
   } = useEditorStore(
     useShallow((state) => ({
       document: state.document,
@@ -96,8 +101,13 @@ function AppShell(): JSX.Element {
       activeTool: state.activeTool,
       extrudeSession: state.extrudeSession,
       transformSession: state.transformSession,
+      undoStack: state.undoStack,
+      redoStack: state.redoStack,
       loadDocument: state.loadDocument,
-      setStatusMessage: state.setStatusMessage
+      setStatusMessage: state.setStatusMessage,
+      deleteSelectedVertices: state.deleteSelectedVertices,
+      undo: state.undo,
+      redo: state.redo
     }))
   );
 
@@ -205,6 +215,15 @@ function AppShell(): JSX.Element {
           <button type="button" onClick={handleExport} disabled={segmentCount === 0}>
             Export Edited G-code
           </button>
+          <button type="button" onClick={undo} disabled={undoStack.length === 0}>
+            Undo `Ctrl/Cmd+Z`
+          </button>
+          <button type="button" onClick={redo} disabled={redoStack.length === 0}>
+            Redo `Ctrl/Cmd+Shift+Z`
+          </button>
+          <button type="button" onClick={deleteSelectedVertices} disabled={selection.vertexIds.length === 0}>
+            Delete vertices
+          </button>
           <button type="button" disabled={selection.vertexIds.length === 0}>
             Move with `G`
           </button>
@@ -296,7 +315,7 @@ function AppShell(): JSX.Element {
             Selected
           </span>
           <span>{selectionLabel}</span>
-          <span>`G` move / `E` extrude / `X Y Z` axis / number input in mm / `Enter` confirm / `Esc` cancel</span>
+          <span>`Ctrl/Cmd+Z` undo / `Ctrl/Cmd+Shift+Z` redo / `Delete` vertex / `G` move / `E` extrude / `X Y Z` axis / number input in mm / `Enter` confirm / `Esc` cancel</span>
         </div>
       </footer>
     </div>

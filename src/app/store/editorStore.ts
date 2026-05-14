@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { deleteNodes } from "../../domain/toolpath/delete";
 import { addVector, cloneVector, distanceBetween } from "../../domain/toolpath/math";
 import { extrudeFromNode } from "../../domain/toolpath/extrude";
 import { moveNodesByOffset } from "../../domain/toolpath/move";
@@ -33,6 +34,12 @@ export type TransformSession = {
   numericInput: string;
 };
 
+type EditorSnapshot = {
+  document: ToolpathDocument;
+  sourceName: string;
+  selection: SelectionState;
+};
+
 type EditorStore = {
   document: ToolpathDocument;
   sourceName: string;
@@ -42,6 +49,8 @@ type EditorStore = {
   activeTool: "select" | "move" | "extrude";
   extrudeSession: ExtrudeSession | null;
   transformSession: TransformSession | null;
+  undoStack: EditorSnapshot[];
+  redoStack: EditorSnapshot[];
   loadDocument: (gcodeText: string, sourceName?: string) => void;
   setStatusMessage: (message: string) => void;
   setHoverTarget: (target: HoverTarget) => void;
@@ -57,6 +66,9 @@ type EditorStore = {
   backspaceTransformNumericInput: () => void;
   cancelTransform: () => void;
   confirmTransform: () => void;
+  deleteSelectedVertices: () => void;
+  undo: () => void;
+  redo: () => void;
 };
 
 const initialDocument = parseGcode(SAMPLE_GCODE, "sample.gcode");
@@ -123,6 +135,79 @@ function toPreviewPosition(document: ToolpathDocument, session: TransformSession
   return addVector(sourceNode.position, session.previewOffset);
 }
 
+function cloneSelection(selection: SelectionState): SelectionState {
+  return {
+    vertexIds: [...selection.vertexIds],
+    segmentIds: [...selection.segmentIds]
+  };
+}
+
+function cloneDocument(document: ToolpathDocument): ToolpathDocument {
+  return {
+    nodes: Object.fromEntries(
+      Object.entries(document.nodes).map(([nodeId, node]) => [
+        nodeId,
+        {
+          ...node,
+          position: { ...node.position }
+        }
+      ])
+    ),
+    segments: document.segments.map((segment) => ({
+      ...segment,
+      leadingRawLines: [...segment.leadingRawLines]
+    })),
+    trailingRawLines: [...document.trailingRawLines],
+    metadata: {
+      ...document.metadata
+    }
+  };
+}
+
+function createSnapshot(
+  document: ToolpathDocument,
+  selection: SelectionState,
+  sourceName: string
+): EditorSnapshot {
+  return {
+    document: cloneDocument(document),
+    selection: cloneSelection(selection),
+    sourceName
+  };
+}
+
+function selectionEquals(left: SelectionState, right: SelectionState): boolean {
+  return (
+    left.vertexIds.length === right.vertexIds.length &&
+    left.segmentIds.length === right.segmentIds.length &&
+    left.vertexIds.every((vertexId, index) => vertexId === right.vertexIds[index]) &&
+    left.segmentIds.every((segmentId, index) => segmentId === right.segmentIds[index])
+  );
+}
+
+function withHistory(
+  state: EditorStore,
+  nextState: Partial<EditorStore> & {
+    document?: ToolpathDocument;
+    selection?: SelectionState;
+    sourceName?: string;
+  }
+): Partial<EditorStore> {
+  const nextDocument = nextState.document ?? state.document;
+  const nextSelection = nextState.selection ?? state.selection;
+  const nextSourceName = nextState.sourceName ?? state.sourceName;
+
+  if (nextDocument === state.document && selectionEquals(nextSelection, state.selection) && nextSourceName === state.sourceName) {
+    return nextState;
+  }
+
+  return {
+    ...nextState,
+    undoStack: [...state.undoStack, createSnapshot(state.document, state.selection, state.sourceName)],
+    redoStack: []
+  };
+}
+
 export const useEditorStore = create<EditorStore>((set, get) => ({
   document: initialDocument,
   sourceName: "sample.gcode",
@@ -135,6 +220,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   activeTool: "select",
   extrudeSession: null,
   transformSession: null,
+  undoStack: [],
+  redoStack: [],
   loadDocument: (gcodeText, sourceName = "untitled.gcode") => {
     set({
       document: parseGcode(gcodeText, sourceName),
@@ -142,6 +229,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       activeTool: "select",
       extrudeSession: null,
       transformSession: null,
+      undoStack: [],
+      redoStack: [],
       selection: { vertexIds: [], segmentIds: [] },
       hoverTarget: null,
       statusMessage: `Loaded ${sourceName}`
@@ -151,22 +240,26 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setHoverTarget: (hoverTarget) => set({ hoverTarget }),
   clearHoverTarget: () => set({ hoverTarget: null }),
   clearSelection: () =>
-    set({
-      selection: { vertexIds: [], segmentIds: [] },
-      activeTool: "select",
-      extrudeSession: null,
-      transformSession: null
-    }),
+    set((state) =>
+      withHistory(state, {
+        selection: { vertexIds: [], segmentIds: [] },
+        activeTool: "select",
+        extrudeSession: null,
+        transformSession: null
+      })
+    ),
   selectVertex: (id, additive = false) =>
-    set((state) => ({
-      selection: {
-        vertexIds: additive ? toggleId(state.selection.vertexIds, id) : [id],
-        segmentIds: additive ? state.selection.segmentIds : []
-      },
-      activeTool: "select",
-      extrudeSession: null,
-      transformSession: null
-    })),
+    set((state) =>
+      withHistory(state, {
+        selection: {
+          vertexIds: additive ? toggleId(state.selection.vertexIds, id) : [id],
+          segmentIds: additive ? state.selection.segmentIds : []
+        },
+        activeTool: "select",
+        extrudeSession: null,
+        transformSession: null
+      })
+    ),
   selectSegment: (id, additive = false) =>
     set((state) => {
       const nextSegmentIds = additive ? toggleId(state.selection.segmentIds, id) : [id];
@@ -174,7 +267,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         ? getStandaloneVertexIds(state.document, state.selection.vertexIds, state.selection.segmentIds)
         : [];
 
-      return {
+      return withHistory(state, {
         selection: {
           vertexIds: uniqueIds([
             ...standaloneVertexIds,
@@ -185,7 +278,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         activeTool: "select",
         extrudeSession: null,
         transformSession: null
-      };
+      });
     }),
   beginMove: (planeNormal) => {
     const state = get();
@@ -398,6 +491,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         activeTool: "select",
         extrudeSession: null,
         transformSession: null,
+        undoStack: [...state.undoStack, createSnapshot(state.document, state.selection, state.sourceName)],
+        redoStack: [],
         statusMessage: "Move committed."
       });
       return;
@@ -420,11 +515,82 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       activeTool: "select",
       extrudeSession: null,
       transformSession: null,
+      undoStack: [...state.undoStack, createSnapshot(state.document, state.selection, state.sourceName)],
+      redoStack: [],
       selection: {
         vertexIds: [nextNodeId],
         segmentIds: []
       },
       statusMessage: "Extrude committed."
     });
-  }
+  },
+  deleteSelectedVertices: () =>
+    set((state) => {
+      if (state.selection.vertexIds.length === 0) {
+        return {
+          statusMessage: "Select at least one vertex before deleting."
+        };
+      }
+
+      const nextDocument = deleteNodes(state.document, uniqueIds(state.selection.vertexIds));
+      if (nextDocument === state.document) {
+        return {
+          statusMessage: "No vertices were deleted."
+        };
+      }
+
+      return withHistory(state, {
+        document: nextDocument,
+        selection: { vertexIds: [], segmentIds: [] },
+        activeTool: "select",
+        extrudeSession: null,
+        transformSession: null,
+        statusMessage:
+          state.selection.vertexIds.length === 1 ? "Vertex deleted." : "Vertices deleted."
+      });
+    }),
+  undo: () =>
+    set((state) => {
+      const previousSnapshot = state.undoStack[state.undoStack.length - 1];
+      if (!previousSnapshot) {
+        return {
+          statusMessage: "Nothing to undo."
+        };
+      }
+
+      return {
+        document: cloneDocument(previousSnapshot.document),
+        sourceName: previousSnapshot.sourceName,
+        selection: cloneSelection(previousSnapshot.selection),
+        activeTool: "select",
+        extrudeSession: null,
+        transformSession: null,
+        hoverTarget: null,
+        undoStack: state.undoStack.slice(0, -1),
+        redoStack: [...state.redoStack, createSnapshot(state.document, state.selection, state.sourceName)],
+        statusMessage: "Undo."
+      };
+    }),
+  redo: () =>
+    set((state) => {
+      const nextSnapshot = state.redoStack[state.redoStack.length - 1];
+      if (!nextSnapshot) {
+        return {
+          statusMessage: "Nothing to redo."
+        };
+      }
+
+      return {
+        document: cloneDocument(nextSnapshot.document),
+        sourceName: nextSnapshot.sourceName,
+        selection: cloneSelection(nextSnapshot.selection),
+        activeTool: "select",
+        extrudeSession: null,
+        transformSession: null,
+        hoverTarget: null,
+        undoStack: [...state.undoStack, createSnapshot(state.document, state.selection, state.sourceName)],
+        redoStack: state.redoStack.slice(0, -1),
+        statusMessage: "Redo."
+      };
+    })
 }));

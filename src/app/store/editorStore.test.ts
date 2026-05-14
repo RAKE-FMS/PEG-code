@@ -112,4 +112,47 @@ describe("editorStore", () => {
       secondSegment.endNodeId
     ]);
   });
+
+  it("undoes and redoes selection changes", () => {
+    const segment = useEditorStore.getState().document.segments[0];
+
+    act(() => {
+      useEditorStore.getState().selectVertex(segment.startNodeId, false);
+      useEditorStore.getState().undo();
+    });
+
+    expect(useEditorStore.getState().selection.vertexIds).toEqual([]);
+
+    act(() => {
+      useEditorStore.getState().redo();
+    });
+
+    expect(useEditorStore.getState().selection.vertexIds).toEqual([segment.startNodeId]);
+  });
+
+  it("deletes a middle vertex and supports undo/redo", () => {
+    const middleNodeId = useEditorStore.getState().document.segments[0].endNodeId;
+
+    act(() => {
+      useEditorStore.getState().selectVertex(middleNodeId, false);
+      useEditorStore.getState().deleteSelectedVertices();
+    });
+
+    expect(useEditorStore.getState().document.segments).toHaveLength(1);
+    expect(useEditorStore.getState().document.nodes[middleNodeId]).toBeUndefined();
+
+    act(() => {
+      useEditorStore.getState().undo();
+    });
+
+    expect(useEditorStore.getState().document.segments).toHaveLength(2);
+    expect(useEditorStore.getState().document.nodes[middleNodeId]).toBeDefined();
+
+    act(() => {
+      useEditorStore.getState().redo();
+    });
+
+    expect(useEditorStore.getState().document.segments).toHaveLength(1);
+    expect(useEditorStore.getState().document.nodes[middleNodeId]).toBeUndefined();
+  });
 });
